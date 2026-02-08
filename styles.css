@@ -1,0 +1,383 @@
+:root {
+  --bg-start: #071a29;
+  --bg-mid: #12395a;
+  --bg-end: #1f5f8b;
+  --panel-bg: rgba(10, 20, 33, 0.8);
+  --panel-border: rgba(255, 255, 255, 0.22);
+  --text-main: #ecfeff;
+  --text-muted: #bae6fd;
+  --x: #f97316;
+  --o: #22d3ee;
+  --draw: #facc15;
+  --cell-bg: rgba(255, 255, 255, 0.1);
+  --cell-border: rgba(255, 255, 255, 0.26);
+  --line: #34d399;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--text-main);
+  background: linear-gradient(135deg, var(--bg-start), var(--bg-mid), var(--bg-end));
+  background-size: 180% 180%;
+  animation: bg-flow 16s ease infinite;
+  overflow-x: hidden;
+}
+
+.bg-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(2px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.orb-1 {
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle, #67e8f9, transparent 70%);
+  top: 6%;
+  left: 6%;
+  animation: float 8s ease-in-out infinite;
+}
+
+.orb-2 {
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle, #fdba74, transparent 70%);
+  bottom: 12%;
+  right: 4%;
+  animation: float 10s ease-in-out infinite reverse;
+}
+
+.orb-3 {
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(circle, #fef08a, transparent 70%);
+  top: 55%;
+  left: 12%;
+  animation: float 12s ease-in-out infinite;
+}
+
+.game {
+  width: min(94vw, 520px);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 20px;
+  padding: 22px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  animation: rise 0.45s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.game-header {
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  letter-spacing: 0.02em;
+  font-size: clamp(1.75rem, 5vw, 2.2rem);
+}
+
+.status {
+  margin: 10px 0 14px;
+  font-size: 1rem;
+  color: var(--text-muted);
+  min-height: 1.5em;
+}
+
+.auth-panel,
+.lobby,
+.room-panel {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 12px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.user-photo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.lobby-row {
+  display: flex;
+  gap: 10px;
+}
+
+.join-row {
+  margin-top: 10px;
+}
+
+input#room-input {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+  padding: 11px 12px;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+input#room-input::placeholder {
+  color: rgba(236, 254, 255, 0.65);
+}
+
+.room-line {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.room-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.scoreboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.score-card {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 8px 10px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.score-label {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.score-value {
+  font-size: 1.2rem;
+}
+
+.score-x .score-value {
+  color: var(--x);
+}
+
+.score-o .score-value {
+  color: var(--o);
+}
+
+.score-draw .score-value {
+  color: var(--draw);
+}
+
+.round {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.board-wrap {
+  position: relative;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  position: relative;
+}
+
+.cell {
+  aspect-ratio: 1 / 1;
+  border: 2px solid var(--cell-border);
+  border-radius: 14px;
+  background: var(--cell-bg);
+  font-size: clamp(2.1rem, 10vw, 3rem);
+  font-weight: 800;
+  cursor: pointer;
+  color: var(--text-main);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transition: transform 0.14s ease, background-color 0.22s ease, border-color 0.22s ease;
+}
+
+.cell:hover:not(:disabled) {
+  transform: translateY(-3px) scale(1.02);
+  border-color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.cell:disabled {
+  cursor: not-allowed;
+}
+
+.cell.x {
+  color: var(--x);
+}
+
+.cell.o {
+  color: var(--o);
+}
+
+.cell.pop {
+  animation: pop 0.22s ease;
+}
+
+.winning {
+  background: rgba(52, 211, 153, 0.25);
+  border-color: rgba(52, 211, 153, 0.95);
+  animation: pulse 0.9s ease infinite;
+}
+
+.win-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.7), rgba(110, 231, 183, 1));
+  transform-origin: 0 50%;
+  opacity: 0;
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.85);
+}
+
+.win-line.show {
+  opacity: 1;
+  animation: draw-line 0.35s ease forwards;
+}
+
+.control-btn {
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 11px 14px;
+  background: linear-gradient(135deg, #14b8a6, #0284c7);
+  color: #f8fafc;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.14s ease, filter 0.2s ease;
+}
+
+.control-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+
+.secondary-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.control-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes bg-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(-16px) translateX(8px);
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.8);
+  }
+  70% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes draw-line {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (max-width: 560px) {
+  .game {
+    padding: 16px;
+    width: min(96vw, 520px);
+  }
+
+  .room-actions,
+  .lobby-row {
+    flex-direction: column;
+  }
+
+  .score-label {
+    font-size: 0.72rem;
+  }
+}
