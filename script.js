@@ -1,30 +1,15 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import {
+  browserLocalPersistence,
   GoogleAuthProvider,
   getRedirectResult,
   onAuthStateChanged,
+  setPersistence,
+  signInWithPopup,
   signInWithRedirect,
   signOut,
   getAuth,
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
-import {
-  getDatabase,
-  onValue,
-  ref,
-  runTransaction,
-  serverTimestamp,
-} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-database.js";
-
-const WINNING_COMBOS = [
-  [0, 1, 2],
-  [3, 4, 5],
-  [6, 7, 8],
-  [0, 3, 6],
-  [1, 4, 7],
-  [2, 5, 8],
-  [0, 4, 8],
-  [2, 4, 6],
-];
 
 const statusEl = document.getElementById("status");
 const roundEl = document.getElementById("round");
@@ -34,6 +19,7 @@ const scoreDrawEl = document.getElementById("score-draw");
 const labelXEl = document.getElementById("label-x");
 const labelOEl = document.getElementById("label-o");
 const roomCodeEl = document.getElementById("room-code");
+const participantsEl = document.getElementById("participants");
 const roomInputEl = document.getElementById("room-input");
 const signInBtn = document.getElementById("google-signin");
 const signOutBtn = document.getElementById("signout");
@@ -51,45 +37,22 @@ const boardEl = document.querySelector(".board");
 const winLineEl = document.getElementById("win-line");
 const cells = Array.from(document.querySelectorAll(".cell"));
 
+const WINNING_COMBOS = [
+  [0, 1, 2],
+  [3, 4, 5],
+  [6, 7, 8],
+  [0, 3, 6],
+  [1, 4, 7],
+  [2, 5, 8],
+  [0, 4, 8],
+  [2, 4, 6],
+];
+
 let auth;
-let database;
 let currentUser = null;
 let currentRoomCode = null;
 let currentRoomState = null;
-let roomUnsubscribe = null;
-
-function setAuthErrorStatus(error) {
-  const code = error?.code || "unknown";
-  const message =
-    error?.message ||
-    (typeof error === "string" ? error : JSON.stringify(error || {})) ||
-    "No additional details from Firebase.";
-
-  if (code === "auth/unauthorized-domain") {
-    statusEl.textContent =
-      "Google auth blocked: add this domain in Firebase Auth -> Settings -> Authorized domains.";
-    return;
-  }
-  if (code === "auth/operation-not-allowed") {
-    statusEl.textContent = "Google provider is disabled in Firebase Auth -> Sign-in method.";
-    return;
-  }
-  if (code === "auth/popup-closed-by-user") {
-    statusEl.textContent = "Sign-in popup was closed before completing login.";
-    return;
-  }
-  if (code === "auth/invalid-api-key") {
-    statusEl.textContent = "Firebase API key is invalid. Check Vercel FIREBASE_API_KEY.";
-    return;
-  }
-  if (code === "auth/network-request-failed") {
-    statusEl.textContent = "Network error during sign-in. Check browser network/ad-blocker settings.";
-    return;
-  }
-
-  statusEl.textContent = `Google sign-in failed: ${code}. ${message}`;
-  console.error("Firebase auth error:", { code, message, error });
-}
+let pollTimer = null;
 
 function hasConfiguredFirebase(firebaseConfig) {
   const requiredKeys = [
@@ -101,23 +64,10 @@ function hasConfiguredFirebase(firebaseConfig) {
     "messagingSenderId",
     "appId",
   ];
-
   return requiredKeys.every((key) => {
     const value = String(firebaseConfig?.[key] || "");
-    return value.length > 0 && !value.startsWith("YOUR_FIREBASE_");
+    return value.length > 0;
   });
-}
-
-async function loadFirebaseConfig() {
-  const response = await fetch("/api/firebase-config", { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("firebase_config_unavailable");
-  }
-  return response.json();
-}
-
-function emptyBoard() {
-  return Array(9).fill("");
 }
 
 function getWinningLine(board) {
@@ -128,28 +78,6 @@ function getWinningLine(board) {
     }
   }
   return null;
-}
-
-function getRoleForUser(room, uid) {
-  if (!room?.players || !uid) {
-    return null;
-  }
-  if (room.players.X?.uid === uid) {
-    return "X";
-  }
-  if (room.players.O?.uid === uid) {
-    return "O";
-  }
-  return null;
-}
-
-function makeRoomCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 6; i += 1) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
 }
 
 function drawWinLine(combo) {
@@ -170,6 +98,7 @@ function drawWinLine(combo) {
   winLineEl.style.top = `${y1 - 3}px`;
   winLineEl.style.width = `${length}px`;
   winLineEl.style.opacity = "1";
+  winLineEl.style.setProperty("--line-angle", `${angle}deg`);
   winLineEl.style.transform = `rotate(${angle}deg) scaleX(0)`;
   winLineEl.classList.remove("show");
   void winLineEl.offsetHeight;
@@ -181,8 +110,22 @@ function hideWinLine() {
   winLineEl.style.opacity = "0";
 }
 
-function renderBoard(room, myRole) {
-  const board = room?.board || emptyBoard();
+function getMyRole(room) {
+  if (!room || !currentUser) {
+    return null;
+  }
+  if (room.players?.X?.uid === currentUser.uid) {
+    return "X";
+  }
+  if (room.players?.O?.uid === currentUser.uid) {
+    return "O";
+  }
+  return null;
+}
+
+function renderBoard(room) {
+  const board = room?.board || Array(9).fill("");
+  const myRole = getMyRole(room);
   const canPlay = room?.status === "playing" && myRole && room.currentTurn === myRole;
 
   cells.forEach((cell, index) => {
@@ -198,15 +141,33 @@ function renderBoard(room, myRole) {
     }
   });
 
-  if (Array.isArray(room?.winnerLine)) {
-    room.winnerLine.forEach((i) => cells[i].classList.add("winning"));
-    drawWinLine(room.winnerLine);
+  const localWinnerLine = Array.isArray(room?.winnerLine) ? room.winnerLine : getWinningLine(board);
+  if (localWinnerLine) {
+    localWinnerLine.forEach((i) => cells[i].classList.add("winning"));
+    drawWinLine(localWinnerLine);
   } else {
     hideWinLine();
   }
 }
 
-function updateStatus(room, myRole) {
+function updateScoreboard(room) {
+  const xName = room?.players?.X?.name || "Player X";
+  const oName = room?.players?.O?.name || "Player O";
+  const scores = room?.scores || { X: 0, O: 0, draw: 0 };
+
+  labelXEl.textContent = `${xName} (X)`;
+  labelOEl.textContent = `${oName} (O)`;
+  scoreXEl.textContent = String(scores.X || 0);
+  scoreOEl.textContent = String(scores.O || 0);
+  scoreDrawEl.textContent = String(scores.draw || 0);
+  roundEl.textContent = `Round ${room?.round || 1}`;
+
+  if (participantsEl) {
+    participantsEl.textContent = `X: ${room?.players?.X?.name || "waiting"} | O: ${room?.players?.O?.name || "waiting"}`;
+  }
+}
+
+function updateStatus(room) {
   if (!currentUser) {
     statusEl.textContent = "Sign in with Google to start.";
     return;
@@ -215,43 +176,29 @@ function updateStatus(room, myRole) {
     statusEl.textContent = "Create a room or join a friend's room.";
     return;
   }
+
+  const myRole = getMyRole(room);
   if (!myRole) {
     statusEl.textContent = "Room full. You are watching as spectator.";
     return;
   }
+
   if (room.status === "waiting") {
     statusEl.textContent = "Waiting for second player to join.";
     return;
   }
+
   if (room.status === "playing") {
-    if (room.currentTurn === myRole) {
-      statusEl.textContent = `Your turn (${myRole}).`;
-    } else {
-      statusEl.textContent = `Opponent's turn (${room.currentTurn}).`;
-    }
+    statusEl.textContent = room.currentTurn === myRole ? `Your turn (${myRole}).` : `Opponent's turn (${room.currentTurn}).`;
     return;
   }
+
   if (room.winner === "draw") {
     statusEl.textContent = `Round ${room.round} ended in a draw.`;
     return;
   }
-  if (room.winner === myRole) {
-    statusEl.textContent = `You won round ${room.round}. Click Next Round to continue.`;
-    return;
-  }
-  statusEl.textContent = `You lost round ${room.round}. Click Next Round to continue.`;
-}
 
-function updateScoreboard(room) {
-  const xName = room?.players?.X?.name || "Player X";
-  const oName = room?.players?.O?.name || "Player O";
-  const scores = room?.scores || { X: 0, O: 0, draw: 0 };
-  labelXEl.textContent = `${xName} (X)`;
-  labelOEl.textContent = `${oName} (O)`;
-  scoreXEl.textContent = String(scores.X || 0);
-  scoreOEl.textContent = String(scores.O || 0);
-  scoreDrawEl.textContent = String(scores.draw || 0);
-  roundEl.textContent = `Round ${room?.round || 1}`;
+  statusEl.textContent = room.winner === myRole ? `You won round ${room.round}. Click Next Round.` : `You lost round ${room.round}. Click Next Round.`;
 }
 
 function updateUiState() {
@@ -269,252 +216,160 @@ function updateUiState() {
   roomPanelEl.classList.toggle("hidden", !currentRoomCode);
 }
 
-function attachRoomListener(roomCode) {
-  if (roomUnsubscribe) {
-    roomUnsubscribe();
-    roomUnsubscribe = null;
+function renderRoom(room) {
+  currentRoomState = room;
+  if (room) {
+    roomCodeEl.textContent = room.roomCode || currentRoomCode || "-";
+  } else {
+    roomCodeEl.textContent = "-";
+  }
+  updateScoreboard(room);
+  updateStatus(room);
+  renderBoard(room);
+  const myRole = getMyRole(room);
+  nextRoundBtn.disabled = !(room?.status === "finished" && myRole);
+}
+
+function setAuthErrorStatus(error) {
+  const code = error?.code || "unknown";
+  const message = error?.message || "No details";
+  if (code === "auth/unauthorized-domain") {
+    statusEl.textContent = "Google auth blocked: add this domain in Firebase Auth authorized domains.";
+    return;
+  }
+  if (code === "auth/operation-not-allowed") {
+    statusEl.textContent = "Google provider is disabled in Firebase Auth.";
+    return;
+  }
+  statusEl.textContent = `Google sign-in failed: ${code}. ${message}`;
+}
+
+async function loadFirebaseConfig() {
+  const response = await fetch("/api/firebase-config", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("firebase_config_unavailable");
+  }
+  return response.json();
+}
+
+async function apiRequest(action, payload = null, method = "POST") {
+  if (!currentUser) {
+    throw new Error("Not authenticated");
   }
 
-  roomUnsubscribe = onValue(ref(database, `rooms/${roomCode}`), (snapshot) => {
-    if (!snapshot.exists()) {
-      currentRoomState = null;
-      currentRoomCode = null;
-      roomCodeEl.textContent = "-";
-      updateUiState();
-      updateStatus(null, null);
-      updateScoreboard(null);
-      renderBoard(null, null);
-      return;
-    }
+  const token = await currentUser.getIdToken();
+  const url = new URL("/api/room", window.location.origin);
+  url.searchParams.set("action", action);
 
-    const room = snapshot.val();
-    currentRoomState = room;
-    currentRoomCode = roomCode;
-    roomCodeEl.textContent = roomCode;
+  if (method === "GET" && payload?.roomCode) {
+    url.searchParams.set("roomCode", payload.roomCode);
+  }
 
-    const myRole = getRoleForUser(room, currentUser?.uid || null);
-    updateUiState();
-    updateStatus(room, myRole);
-    updateScoreboard(room);
-    renderBoard(room, myRole);
-    nextRoundBtn.disabled = !(room.status === "finished" && Boolean(myRole));
+  const response = await fetch(url.toString(), {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: method === "POST" ? JSON.stringify(payload || {}) : undefined,
   });
+
+  const text = await response.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch (_error) {
+    throw new Error(`API ${action} failed: expected JSON, got: ${text.slice(0, 120)}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(json?.error || "Request failed");
+  }
+  return json;
+}
+
+async function pollRoom() {
+  if (!currentRoomCode || !currentUser) {
+    return;
+  }
+  try {
+    const result = await apiRequest("get", { roomCode: currentRoomCode }, "GET");
+    renderRoom(result.room);
+  } catch (error) {
+    statusEl.textContent = String(error.message || "Failed to refresh room");
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(() => {
+    pollRoom();
+  }, 1000);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
 
 async function createRoom() {
-  if (!currentUser) {
-    return;
-  }
-
-  let code = makeRoomCode();
-  let retries = 0;
-  while (retries < 5) {
-    const roomRef = ref(database, `rooms/${code}`);
-    const payload = {
-      board: emptyBoard(),
-      currentTurn: "X",
-      status: "waiting",
-      round: 1,
-      winner: null,
-      winnerLine: null,
-      scores: { X: 0, O: 0, draw: 0 },
-      players: {
-        X: {
-          uid: currentUser.uid,
-          name: currentUser.displayName || "Player X",
-        },
-        O: null,
-      },
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-
-    try {
-      const result = await runTransaction(roomRef, (room) => {
-        if (room) {
-          return;
-        }
-        return payload;
-      });
-      if (!result.committed) {
-        retries += 1;
-        code = makeRoomCode();
-        continue;
-      }
-      history.replaceState({}, "", `${window.location.pathname}?room=${code}`);
-      attachRoomListener(code);
-      return;
-    } catch (_error) {
-      retries += 1;
-      code = makeRoomCode();
-    }
-  }
-
-  statusEl.textContent = "Failed to create room. Please try again.";
+  const result = await apiRequest("create", {});
+  const roomCode = result.room.roomCode;
+  currentRoomCode = roomCode;
+  history.replaceState({}, "", `${window.location.pathname}?room=${roomCode}`);
+  updateUiState();
+  renderRoom(result.room);
+  startPolling();
 }
 
-async function joinRoom(code) {
-  if (!currentUser || !code) {
+async function joinRoom(inputCode) {
+  const roomCode = String(inputCode || "").trim().toUpperCase();
+  if (!roomCode) {
+    statusEl.textContent = "Enter a valid room code.";
     return;
   }
 
-  const roomCode = code.trim().toUpperCase();
-  const roomRef = ref(database, `rooms/${roomCode}`);
-
-  const transactionResult = await runTransaction(roomRef, (room) => {
-    if (!room) {
-      return;
-    }
-    if (!room.players) {
-      room.players = { X: null, O: null };
-    }
-
-    const isX = room.players.X?.uid === currentUser.uid;
-    const isO = room.players.O?.uid === currentUser.uid;
-    if (isX || isO) {
-      if (room.players.X && room.players.O) {
-        room.status = "playing";
-      }
-      room.updatedAt = Date.now();
-      return room;
-    }
-
-    if (!room.players.O) {
-      room.players.O = {
-        uid: currentUser.uid,
-        name: currentUser.displayName || "Player O",
-      };
-      room.status = room.players.X ? "playing" : "waiting";
-      room.updatedAt = Date.now();
-      return room;
-    }
-
-    return;
-  });
-
-  if (!transactionResult.committed) {
-    statusEl.textContent = "Unable to join room. It may be full or missing.";
-    return;
-  }
-
+  const result = await apiRequest("join", { roomCode });
+  currentRoomCode = roomCode;
   history.replaceState({}, "", `${window.location.pathname}?room=${roomCode}`);
-  attachRoomListener(roomCode);
+  updateUiState();
+  renderRoom(result.room);
+  if (result.spectator) {
+    statusEl.textContent = "Room full. You joined as spectator.";
+  }
+  startPolling();
 }
 
 async function leaveRoom() {
-  if (!currentUser || !currentRoomCode) {
+  if (!currentRoomCode) {
     return;
   }
-  const roomRef = ref(database, `rooms/${currentRoomCode}`);
-
-  await runTransaction(roomRef, (room) => {
-    if (!room?.players) {
-      return room;
-    }
-
-    if (room.players.X?.uid === currentUser.uid) {
-      room.players.X = null;
-    }
-    if (room.players.O?.uid === currentUser.uid) {
-      room.players.O = null;
-    }
-
-    if (!room.players.X && !room.players.O) {
-      return null;
-    }
-
-    room.board = emptyBoard();
-    room.round = 1;
-    room.currentTurn = room.players.X ? "X" : "O";
-    room.status = "waiting";
-    room.winner = null;
-    room.winnerLine = null;
-    room.scores = { X: 0, O: 0, draw: 0 };
-    room.updatedAt = Date.now();
-    return room;
-  });
-
-  if (roomUnsubscribe) {
-    roomUnsubscribe();
-    roomUnsubscribe = null;
-  }
-
+  await apiRequest("leave", { roomCode: currentRoomCode });
+  stopPolling();
   currentRoomCode = null;
   currentRoomState = null;
   history.replaceState({}, "", window.location.pathname);
   updateUiState();
-  updateStatus(null, null);
-  updateScoreboard(null);
-  renderBoard(null, null);
+  renderRoom(null);
 }
 
 async function handleCellClick(event) {
-  if (!currentUser || !currentRoomCode) {
+  if (!currentRoomCode) {
     return;
   }
   const index = Number(event.currentTarget.dataset.index);
-  const roomRef = ref(database, `rooms/${currentRoomCode}`);
-
-  await runTransaction(roomRef, (room) => {
-    if (!room || room.status !== "playing" || !Array.isArray(room.board)) {
-      return room;
-    }
-
-    const role = getRoleForUser(room, currentUser.uid);
-    if (!role || room.currentTurn !== role || room.board[index]) {
-      return room;
-    }
-
-    room.board[index] = role;
-    const winnerLine = getWinningLine(room.board);
-
-    if (winnerLine) {
-      room.status = "finished";
-      room.winner = role;
-      room.winnerLine = winnerLine;
-      if (!room.scores) {
-        room.scores = { X: 0, O: 0, draw: 0 };
-      }
-      room.scores[role] = (room.scores[role] || 0) + 1;
-    } else if (room.board.every((value) => value !== "")) {
-      room.status = "finished";
-      room.winner = "draw";
-      room.winnerLine = null;
-      if (!room.scores) {
-        room.scores = { X: 0, O: 0, draw: 0 };
-      }
-      room.scores.draw = (room.scores.draw || 0) + 1;
-    } else {
-      room.currentTurn = role === "X" ? "O" : "X";
-    }
-
-    room.updatedAt = Date.now();
-    return room;
-  });
+  const result = await apiRequest("move", { roomCode: currentRoomCode, index });
+  renderRoom(result.room);
 }
 
 async function nextRound() {
   if (!currentRoomCode) {
     return;
   }
-  const roomRef = ref(database, `rooms/${currentRoomCode}`);
-  await runTransaction(roomRef, (room) => {
-    if (!room || room.status !== "finished") {
-      return room;
-    }
-    const role = getRoleForUser(room, currentUser?.uid || null);
-    if (!role) {
-      return room;
-    }
-    room.round = (room.round || 1) + 1;
-    room.board = emptyBoard();
-    room.winner = null;
-    room.winnerLine = null;
-    room.status = room.players?.X && room.players?.O ? "playing" : "waiting";
-    room.currentTurn = room.round % 2 === 0 ? "O" : "X";
-    room.updatedAt = Date.now();
-    return room;
-  });
+  const result = await apiRequest("next-round", { roomCode: currentRoomCode });
+  renderRoom(result.room);
 }
 
 async function copyInviteLink() {
@@ -532,73 +387,61 @@ async function copyInviteLink() {
 
 async function signIn() {
   const provider = new GoogleAuthProvider();
-  statusEl.textContent = "Redirecting to Google sign-in...";
-  await signInWithRedirect(auth, provider);
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    if (error?.code === "auth/popup-blocked" || error?.code === "auth/cancelled-popup-request") {
+      statusEl.textContent = "Redirecting to Google sign-in...";
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+    throw error;
+  }
 }
 
 async function boot() {
-  let firebaseConfig;
-  try {
-    firebaseConfig = await loadFirebaseConfig();
-  } catch (_error) {
-    statusEl.textContent =
-      "Firebase config endpoint unavailable. Ensure Vercel env vars are set and redeploy.";
-    signInBtn.disabled = true;
-    createRoomBtn.disabled = true;
-    joinRoomBtn.disabled = true;
-    nextRoundBtn.disabled = true;
-    return;
-  }
-
+  const firebaseConfig = await loadFirebaseConfig();
   if (!hasConfiguredFirebase(firebaseConfig)) {
-    statusEl.textContent =
-      "Firebase config missing in environment. Set Vercel FIREBASE_* vars and redeploy.";
+    statusEl.textContent = "Firebase config missing in environment.";
     signInBtn.disabled = true;
-    createRoomBtn.disabled = true;
-    joinRoomBtn.disabled = true;
-    nextRoundBtn.disabled = true;
     return;
   }
 
   const app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  database = getDatabase(app);
 
-  getRedirectResult(auth).catch((error) => {
-    setAuthErrorStatus(error);
-  });
+  await setPersistence(auth, browserLocalPersistence);
+  await getRedirectResult(auth).catch((error) => setAuthErrorStatus(error));
 
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     updateUiState();
 
     if (!user) {
-      if (roomUnsubscribe) {
-        roomUnsubscribe();
-        roomUnsubscribe = null;
-      }
+      stopPolling();
       currentRoomCode = null;
       currentRoomState = null;
-      updateStatus(null, null);
-      updateScoreboard(null);
-      renderBoard(null, null);
+      renderRoom(null);
       return;
     }
 
     const urlRoom = new URLSearchParams(window.location.search).get("room");
     if (urlRoom && !currentRoomCode) {
-      await joinRoom(urlRoom.toUpperCase());
+      try {
+        await joinRoom(urlRoom);
+      } catch (error) {
+        statusEl.textContent = String(error.message || "Could not join room");
+      }
       return;
     }
 
-    updateStatus(currentRoomState, getRoleForUser(currentRoomState, user.uid));
+    updateStatus(currentRoomState);
   });
 }
 
 signInBtn.addEventListener("click", () => {
-  signIn().catch((error) => {
-    setAuthErrorStatus(error);
-  });
+  statusEl.textContent = "Starting Google sign-in...";
+  signIn().catch((error) => setAuthErrorStatus(error));
 });
 
 signOutBtn.addEventListener("click", () => {
@@ -609,32 +452,20 @@ signOutBtn.addEventListener("click", () => {
 
 createRoomBtn.addEventListener("click", () => {
   createRoom().catch((error) => {
-    if (error?.code === "PERMISSION_DENIED") {
-      statusEl.textContent = "Database permission denied. Publish database.rules.json in Firebase.";
-      return;
-    }
-    statusEl.textContent = "Could not create room.";
+    statusEl.textContent = String(error.message || "Could not create room.");
   });
 });
 
 joinRoomBtn.addEventListener("click", () => {
   joinRoom(roomInputEl.value).catch((error) => {
-    if (error?.code === "PERMISSION_DENIED") {
-      statusEl.textContent = "Database permission denied. Publish database.rules.json in Firebase.";
-      return;
-    }
-    statusEl.textContent = "Could not join room.";
+    statusEl.textContent = String(error.message || "Could not join room.");
   });
 });
 
 roomInputEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     joinRoom(roomInputEl.value).catch((error) => {
-      if (error?.code === "PERMISSION_DENIED") {
-        statusEl.textContent = "Database permission denied. Publish database.rules.json in Firebase.";
-        return;
-      }
-      statusEl.textContent = "Could not join room.";
+      statusEl.textContent = String(error.message || "Could not join room.");
     });
   }
 });
@@ -644,14 +475,14 @@ copyLinkBtn.addEventListener("click", () => {
 });
 
 leaveRoomBtn.addEventListener("click", () => {
-  leaveRoom().catch(() => {
-    statusEl.textContent = "Could not leave room.";
+  leaveRoom().catch((error) => {
+    statusEl.textContent = String(error.message || "Could not leave room.");
   });
 });
 
 nextRoundBtn.addEventListener("click", () => {
-  nextRound().catch(() => {
-    statusEl.textContent = "Could not start next round.";
+  nextRound().catch((error) => {
+    statusEl.textContent = String(error.message || "Could not start next round.");
   });
 });
 
@@ -660,8 +491,7 @@ cells.forEach((cell) => {
 });
 
 updateUiState();
-updateScoreboard(null);
-renderBoard(null, null);
-boot().catch(() => {
-  statusEl.textContent = "Failed to initialize app.";
+renderRoom(null);
+boot().catch((error) => {
+  statusEl.textContent = `Failed to initialize app: ${error.message || "unknown"}`;
 });

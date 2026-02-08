@@ -2,17 +2,20 @@
 
 Realtime Tic Tac Toe with:
 - Google Authentication (Firebase Auth)
-- Remote multiplayer rooms (Firebase Realtime Database)
+- Multiplayer game state in Postgres (via Vercel API routes)
 - Animated UI and round-based scoring
 
-## 1. Configure Firebase web app values (secure repo setup)
+## Architecture
 
-This project does not store Firebase config in Git.
-Values are served from Vercel environment variables via `/api/firebase-config`.
+- Client auth: Firebase Web SDK (Google sign-in)
+- Server auth verification: Firebase Identity Toolkit (`accounts:lookup`) using ID token
+- Game state storage: Postgres table `game_rooms`
+- Realtime update model: client polling (`/api/room?action=get`) every second
 
-1. Open Firebase Console -> Project settings -> Your apps -> Web app.
-2. Copy SDK config values.
-3. Add these variables in Vercel project settings:
+## Environment variables
+
+Set these in Vercel (Production + Development) and in local `.env.local`:
+
 - `FIREBASE_API_KEY`
 - `FIREBASE_AUTH_DOMAIN`
 - `FIREBASE_DATABASE_URL`
@@ -20,49 +23,35 @@ Values are served from Vercel environment variables via `/api/firebase-config`.
 - `FIREBASE_STORAGE_BUCKET`
 - `FIREBASE_MESSAGING_SENDER_ID`
 - `FIREBASE_APP_ID`
-4. Redeploy Vercel.
+- `DATABASE_URL` (Postgres connection string)
 
-## 2. Enable Firebase Authentication
-
-1. Go to Authentication -> Sign-in method.
-2. Enable `Google`.
-3. Go to Authentication -> Settings -> Authorized domains.
-4. Add:
-- `localhost`
-- `tic-tac-toe-multiplayer-nu.vercel.app`
-- any other Vercel/custom domain you use
-
-## 3. Set Realtime Database rules
-
-Publish rules from `/Users/amitvikram/Documents/New project/database.rules.json`.
-
-If Firebase CLI is connected to your project:
+## Local run
 
 ```bash
-npx --yes firebase-tools@latest deploy --only database --project <your-firebase-project-id>
+npm install
+npx --yes vercel dev --listen 3200
 ```
 
-## 4. Run locally
+Open:
+- `http://localhost:3200`
+- `http://localhost:3200/api/firebase-config`
 
-```bash
-npx --yes serve .
-```
+## API endpoints
 
-Open the local URL and test:
-- Sign in with Google
-- Create room
-- Open invite link in another browser/incognito session
+`/api/room`
 
-## 5. Deploy to Vercel
+Actions:
+- `GET ?action=get&roomCode=XXXXXX`
+- `POST ?action=create`
+- `POST ?action=join`
+- `POST ?action=move`
+- `POST ?action=next-round`
+- `POST ?action=leave`
+
+All require `Authorization: Bearer <firebase_id_token>`.
+
+## Deploy
 
 ```bash
 npx --yes vercel --prod
 ```
-
-## Multiplayer flow
-
-1. Sign in with Google.
-2. Click `Create Room`.
-3. Copy invite link and send to a friend.
-4. Friend signs in and opens the invite link.
-5. Play turns in real time.
