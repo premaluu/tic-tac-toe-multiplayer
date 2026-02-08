@@ -3,7 +3,6 @@ import {
   GoogleAuthProvider,
   getRedirectResult,
   onAuthStateChanged,
-  signInWithPopup,
   signInWithRedirect,
   signOut,
   getAuth,
@@ -61,7 +60,10 @@ let roomUnsubscribe = null;
 
 function setAuthErrorStatus(error) {
   const code = error?.code || "unknown";
-  const message = error?.message || "No additional details from Firebase.";
+  const message =
+    error?.message ||
+    (typeof error === "string" ? error : JSON.stringify(error || {})) ||
+    "No additional details from Firebase.";
 
   if (code === "auth/unauthorized-domain") {
     statusEl.textContent =
@@ -85,7 +87,7 @@ function setAuthErrorStatus(error) {
     return;
   }
 
-  statusEl.textContent = `Google sign-in failed: ${code}. Check console for details.`;
+  statusEl.textContent = `Google sign-in failed: ${code}. ${message}`;
   console.error("Firebase auth error:", { code, message, error });
 }
 
@@ -530,15 +532,8 @@ async function copyInviteLink() {
 
 async function signIn() {
   const provider = new GoogleAuthProvider();
-  try {
-    await signInWithPopup(auth, provider);
-  } catch (error) {
-    if (error?.code === "auth/popup-blocked" || error?.code === "auth/cancelled-popup-request") {
-      await signInWithRedirect(auth, provider);
-      return;
-    }
-    throw error;
-  }
+  statusEl.textContent = "Redirecting to Google sign-in...";
+  await signInWithRedirect(auth, provider);
 }
 
 async function boot() {
