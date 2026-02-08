@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import {
   GoogleAuthProvider,
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
@@ -57,6 +58,36 @@ let currentUser = null;
 let currentRoomCode = null;
 let currentRoomState = null;
 let roomUnsubscribe = null;
+
+function setAuthErrorStatus(error) {
+  const code = error?.code || "unknown";
+  const message = error?.message || "No additional details from Firebase.";
+
+  if (code === "auth/unauthorized-domain") {
+    statusEl.textContent =
+      "Google auth blocked: add this domain in Firebase Auth -> Settings -> Authorized domains.";
+    return;
+  }
+  if (code === "auth/operation-not-allowed") {
+    statusEl.textContent = "Google provider is disabled in Firebase Auth -> Sign-in method.";
+    return;
+  }
+  if (code === "auth/popup-closed-by-user") {
+    statusEl.textContent = "Sign-in popup was closed before completing login.";
+    return;
+  }
+  if (code === "auth/invalid-api-key") {
+    statusEl.textContent = "Firebase API key is invalid. Check Vercel FIREBASE_API_KEY.";
+    return;
+  }
+  if (code === "auth/network-request-failed") {
+    statusEl.textContent = "Network error during sign-in. Check browser network/ad-blocker settings.";
+    return;
+  }
+
+  statusEl.textContent = `Google sign-in failed: ${code}. Check console for details.`;
+  console.error("Firebase auth error:", { code, message, error });
+}
 
 function hasConfiguredFirebase(firebaseConfig) {
   const requiredKeys = [
@@ -538,6 +569,10 @@ async function boot() {
   auth = getAuth(app);
   database = getDatabase(app);
 
+  getRedirectResult(auth).catch((error) => {
+    setAuthErrorStatus(error);
+  });
+
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     updateUiState();
@@ -567,21 +602,7 @@ async function boot() {
 
 signInBtn.addEventListener("click", () => {
   signIn().catch((error) => {
-    if (error?.code === "auth/unauthorized-domain") {
-      statusEl.textContent =
-        "Google auth blocked: add this domain in Firebase Auth -> Settings -> Authorized domains.";
-      return;
-    }
-    if (error?.code === "auth/operation-not-allowed") {
-      statusEl.textContent =
-        "Google provider is disabled. Enable it in Firebase Auth -> Sign-in method.";
-      return;
-    }
-    if (error?.code === "auth/popup-closed-by-user") {
-      statusEl.textContent = "Sign-in popup was closed before completing login.";
-      return;
-    }
-    statusEl.textContent = "Google sign-in failed. Check popup settings and Firebase Auth config.";
+    setAuthErrorStatus(error);
   });
 });
 
