@@ -3,6 +3,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   getAuth,
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
@@ -498,7 +499,15 @@ async function copyInviteLink() {
 
 async function signIn() {
   const provider = new GoogleAuthProvider();
-  await signInWithPopup(auth, provider);
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    if (error?.code === "auth/popup-blocked" || error?.code === "auth/cancelled-popup-request") {
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+    throw error;
+  }
 }
 
 async function boot() {
@@ -561,6 +570,15 @@ signInBtn.addEventListener("click", () => {
     if (error?.code === "auth/unauthorized-domain") {
       statusEl.textContent =
         "Google auth blocked: add this domain in Firebase Auth -> Settings -> Authorized domains.";
+      return;
+    }
+    if (error?.code === "auth/operation-not-allowed") {
+      statusEl.textContent =
+        "Google provider is disabled. Enable it in Firebase Auth -> Sign-in method.";
+      return;
+    }
+    if (error?.code === "auth/popup-closed-by-user") {
+      statusEl.textContent = "Sign-in popup was closed before completing login.";
       return;
     }
     statusEl.textContent = "Google sign-in failed. Check popup settings and Firebase Auth config.";
