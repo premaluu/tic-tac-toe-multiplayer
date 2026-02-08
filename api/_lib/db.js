@@ -6,9 +6,14 @@ function getSql() {
   if (sql) {
     return sql;
   }
-  const connection = String(process.env.DATABASE_URL || "").trim();
+  const connection = String(
+    process.env.DATABASE_URL ||
+      process.env.POSTGRES_URL_NON_POOLING ||
+      process.env.POSTGRES_URL ||
+      ""
+  ).trim();
   if (!connection) {
-    throw new Error("DATABASE_URL is required");
+    throw new Error("DATABASE_URL or POSTGRES_URL_NON_POOLING is required");
   }
   sql = postgres(connection, {
     max: 1,
